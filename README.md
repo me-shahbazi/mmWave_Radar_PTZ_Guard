@@ -1,3 +1,3 @@
-# mmWave_Radar_PTZ_Guard
+## mmWave_Radar_PTZ_Guard
 mmWave_Radar_PTZ_Guard is an innovative security system that integrates mmWave radar sensors (Ti AWR1843) with PTZ (Pan-Tilt-Zoom) cameras (HikVison ISAPI protocol) to enhance surveillance capabilities. This project aims to develop a system that dynamically controls PTZ cameras based on real-time radar sensor data, ensuring comprehensive and responsive security monitoring.
 This repository uses the MRR (Medium Range Radar) demo project, which is loaded on the AWR1843 sensor. The project exploits the capabilities of the AWR1843 in medium-range radar applications, including object detection and tracking.

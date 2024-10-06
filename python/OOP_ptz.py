@@ -10,7 +10,13 @@ import re
 class ptzCamera():
     
     # Some General variables for calling pre-defined preSets in camera:
-    preSet = {"HIKZERO" : 1, "John" : 2, "Dave" : 3, "ALLZERO" : 4}
+    preSet = {"HIKZERO" : 1, 
+              "DefaultView" : 2, 
+              "MySelf" : 3, 
+              "ALLZERO" : 4,
+              "DrRoom" : 5,
+              "MainEntrance" : 6,
+              "BackDoor" : 7}
     # This patern will be used for extracting desiered information from responses:
     statusPatern = r"<[absoluteZoom,azimuth,elevation]+>\d+</[absoluteZoom,azimuth,elevation]+>"
 
@@ -97,9 +103,10 @@ if __name__ == '__main__':
     myCam = ptzCamera('192.168.1.64', 'admin', 'a_123456')
     
     # One of the following commands can move camera based on what is desired:
+    
     # myCam.relative_move_command(pan=30, tilt=0, zoom=0, duration = 1000)
-    # myCam.move_to_preset(myCam.preSet["John"])
-    # myCam.go_to_position(pan=0, tilt=0, zoom=1)
+    # myCam.move_to_preset(myCam.preSet["ALLZERO"])
+    myCam.go_to_position(pan=0, tilt=0, zoom=1)
 
     pan, tilt, zoom = myCam.get_position()
     print(f'pan: {pan} | tilt: {tilt} | zoom: {zoom}')

@@ -28,52 +28,69 @@ class TiMRRSensor():
     OBJ_Struct_Bytes     = 10
     Cluster_Struct_Bytes = 8
     #____________________________________________
-    # Different Colors for simpler tracking visualisation
-    Colors = [(255,0,0), (0,255,0), (0,0,255), (255,255,0), (255,0,255), (0, 255, 255), (150,200,50), (0,150,200), (150,0,250), (250,150,250)]
-    #____________________________________________
     # Srounding Field of View Initial declaration used in UI.
+        # maximum range of MRR output meters [user guide] = 150
+        # maximum range pixels = 150*(1080//150) = 1050
+        # pixels of every meter = 1080//150 = 7
+        
+        # frontRange_ = 150
+        # widthRange_ = 40*2
+        # everyMeterPixels = 1080//frontRange_
+    DisplayPointClouds = True
     fovInitFlag = True
-    frontRange_ = 25   # 150 -> 25
-    widthRange_ = 25 # chose as always frontRange_ > widthRange_ # 40*2 -> 10*2
-    everyMeterPixels = int(1080//frontRange_)
+    frontRange_ = 15   # 150 -> 25
+    widthRange_ = 20 # chose as always frontRange_ > widthRange_ # 40*2 -> 10*2 , Why I had written this?
+    MaxLengthResolution = 1080
+    everyMeterPixels = int(MaxLengthResolution//frontRange_)
     fiveMetersPixels  = int(5 * everyMeterPixels)
     #____________________________________________
     # TrackerID.
     ObjectsArray = np.zeros((1,12))
-    
+    CloudsArray = np.zeros((1,9))
+    minSpeed = 0.2
+
     def deFOV(self): # define field of View
         if self.fovInitFlag:
             # Simple and Clear Checked Field
             
-            # maximum range of MRR output meters [user guide] = 150
-            # maximum range pixels = 150*(1080//150) = 1050
-            # pixels of every meter = 1080//150 = 7
-            
-            # frontRange_ = 150
-            # widthRange_ = 40*2
-            # everyMeterPixels = 1080//frontRange_
-            
             length = self.everyMeterPixels * (self.frontRange_)
             width  = self.everyMeterPixels * (self.widthRange_)
             self.img = np.ones((length, width, 3), dtype= np.uint8) * 255 # *255: white screen pixels
-            # every 10 meter: self.tenMetersPixels
-            for i in range(int(width/self.fiveMetersPixels)):
-                self.img[:,self.fiveMetersPixels*i] = (0, 0, 0) 
-            for j in range(int(length/self.fiveMetersPixels)):
-                self.img[self.fiveMetersPixels*j,:] = (0, 0, 0)
+            
+            # every 5 meter: self.fiveMetersPixels
+            # every 1 meter: self.everyMeterPixels
+            lines = self.everyMeterPixels
+            for i in range(int(width/lines)): # Vertical lines
+                self.img[:,lines*i] = (0, 255, 0)
+
+            for j in range(int(length/lines)):# Horizontal
+                self.img[lines*j,:] = (255, 0, 0)
+            
+            # Centerline Red Line:
             self.img[:,int(width//2)] = (0,0,255)
+
+            # Gray Boxes:
+                # front Wall:
+            self.img[0:(self.frontRange_-13)*self.everyMeterPixels,:] = (125,125,125)
+                # Left wall:
+            self.img[int((self.frontRange_-7.3)*self.everyMeterPixels):,0:((self.widthRange_//2)-4)*self.everyMeterPixels] = (125,125,125)
+                # Right wall:
+            self.img[int((self.frontRange_-5.7)*self.everyMeterPixels):,((self.widthRange_//2)+3)*self.everyMeterPixels:] = (125,125,125)
+            
             self.fovInitFlag = False # Just runs once
         else:
             # Static Objects added to the field of View (gray ones)
             # learnedImg defines in the __init__ method as returning value of Learn method
             self.img = self.learnedImg.copy()
     
-    def __init__(self):
+    def __init__(self, globalArray, globalClouds):
         # Methods and functions in below run at the begining of defining a new MRR Obj
         # Like as soon as : myRadar = TiMRRSensor()
+        self.outputArray = globalArray
+        self.outputClouds = globalClouds
         self.Connect()
         self.deFOV()
-        self.learnedImg = self.Learn(500)
+        self.learnedImg = self.Learn(10)
         self.dispFlag = True
         self.parseFlag = True
 
@@ -165,10 +182,8 @@ class TiMRRSensor():
     def parseOne(self):     
         data = self.DataReceiver.read(self.magicWordLen)
         if data == self.magicWord:
-            # print("self.ObjectsArray:\n", self.ObjectsArray)
-            print("\t\t\t\t\t----------------------------")
-            print("\t\t\t\t\t\t*** New Message: ***")
-
+            # print("\t\t\t\t\t\t*** New Message: ***")
+            # print("\t\t\t\t\t----------------------------")
 
             bMsgHeader = self.DataReceiver.read(self.MsgHeader_size)
             tup = struct.unpack(self.MsgHeader_format_str, bMsgHeader)
@@ -179,41 +194,62 @@ class TiMRRSensor():
             }
             msgHeader["version"]  = hex(msgHeader["version"])[2:]
             msgHeader["platform"] = hex(msgHeader["platform"])[2:]
-            print("Msg Header:\n   ", msgHeader)
+            # print("Msg Header:\n   ", msgHeader)
 
             MsgBody = self.DataReceiver.read(msgHeader["totalPacketLen"]-(self.magicWordLen + self.MsgHeader_size)) 
 
             MsgPointer = 0
 
-            for _ in range(msgHeader["numTLVs"]):
-                bTL = MsgBody[MsgPointer : MsgPointer + self.TLformatSize]
-                MsgPointer += self.TLformatSize
-                tup = struct.unpack(self.TLformat, bTL)
-                TLheader = {
-                    attribute: tup[i]
-                    for i, attribute in enumerate(self.TLattributes)
-                }
-                print("--------------------------------")
-                print("TLV type: ", TLheader["type"])
-                print("TLV length: ", TLheader["length"])
-                
-                if TLheader["type"] == 1: # Get detected object descriptor
-                    self.getObj(MsgBody[MsgPointer : MsgPointer + TLheader["length"]])
-                elif TLheader["type"] == 2: # Clusters
-                    self.getCluster(MsgBody[MsgPointer : MsgPointer + TLheader["length"]])
-                elif TLheader["type"] == 3: # Tracker
-                    self.getTracker(MsgBody[MsgPointer : MsgPointer + TLheader["length"]], msgHeader["frameNumber"])
-                elif TLheader["type"] == 4: # Parking Assist
-                    pass
-                else: 
-                    print("Undifined TLV")
-                
-                MsgPointer += TLheader["length"]
+            try:
+                for _ in range(msgHeader["numTLVs"]):
+                    bTL = MsgBody[MsgPointer : MsgPointer + self.TLformatSize]
+                    MsgPointer += self.TLformatSize
 
-            self.ObjectsArray = self.ObjectsArray[self.ObjectsArray[:, 10] >= msgHeader["frameNumber"]-200]
-            # print("msgHeader[\"frameNumber\"]-200 : ", msgHeader["frameNumber"]-200)
-            # print("len(self.ObjectsArray): ",len(self.ObjectsArray))
-    def getObj(self, bNQ):
+                    tup = struct.unpack(self.TLformat, bTL)
+                    TLheader = {
+                        attribute: tup[i]
+                        for i, attribute in enumerate(self.TLattributes)
+                    }
+                    # print("--------------------------------")
+                    # print("TLV type: ", TLheader["type"])
+                    # print("TLV length: ", TLheader["length"])
+                    
+                    if TLheader["type"] == 1: # Get detected object descriptor
+                        self.getObj(MsgBody[MsgPointer : MsgPointer + TLheader["length"]], msgHeader["frameNumber"], msgHeader["subFrameNumber"])
+                
+                        eia = 10 # must be even # for even frame number subframe = 1 | for odd frame number subframe = 0
+                        self.CloudsArray = self.CloudsArray[self.CloudsArray[:, 7] >= msgHeader["frameNumber"]-eia] # How many objects remain in array
+
+                        self.outputClouds.clear()
+                        if len(self.CloudsArray)>0:
+                            self.outputClouds.append(self.CloudsArray)
+
+                    elif TLheader["type"] == 2: # Clusters
+                        self.getCluster(MsgBody[MsgPointer : MsgPointer + TLheader["length"]])
+                    
+                    elif TLheader["type"] == 3: # Tracker
+                        self.getTracker(MsgBody[MsgPointer : MsgPointer + TLheader["length"]], msgHeader["frameNumber"])
+                
+                        eia = 2 # must be even # for even frame number subframe = 1 | for odd frame number subframe = 0
+                        self.ObjectsArray = self.ObjectsArray[self.ObjectsArray[:, 10] >= msgHeader["frameNumber"]-eia] # How many objects remain in array
+                        
+                        self.outputArray.clear()
+                        if len(self.ObjectsArray)>0:
+                            self.outputArray.append(self.ObjectsArray)
+                            # print("self.ObjectsArray:\n",self.ObjectsArray)
+                            # print("self.outputArray:\n",self.outputArray)
+
+                    elif TLheader["type"] == 4: # Parking Assist
+                        pass
+                    else: 
+                        print("Undifined TLV")
+                    
+                    MsgPointer += TLheader["length"]
+            except struct.error as e:
+                print("Error unpacking TLV:", e)
+                pass
+              
+    def getObj(self, bNQ, frameNum, subNum):
         (numObj, xyzQFormat) = struct.unpack('HH', bNQ[0:4])
         invXYZQFormat = 1.0/(2**xyzQFormat)
         bNQ = bNQ[4:]
@@ -224,11 +260,23 @@ class TiMRRSensor():
 
             Doppler, PeakVal, X, Y, Z = tup
             Doppler = tup[0] * invXYZQFormat
-            X =       tup[2] * invXYZQFormat
-            Y =       tup[3] * invXYZQFormat
-            Z =       -(tup[4] * invXYZQFormat)
+            X_ =       tup[2] * invXYZQFormat
+            Y_ =       tup[3] * invXYZQFormat
+            Z_ =       -(tup[4] * invXYZQFormat)
             Range_ =  round(np.sqrt(X**2 + Y**2 + Z**2), 2)
-            # print("%.2f\t%d\t%.2f\t%.2f\t%.2f\t%.2f" %(Doppler, PeakVal, X, Y, Z, Range_))
+            
+            if self.DisplayPointClouds and (not self.LearnModeFlag) and (Y_ < 20):
+                if Doppler > 0.1 or Doppler < -0.1:
+                    # print("subNum: ", subNum)
+                    # print("%.2f\t%d\t%.2f\t%.2f\t%.2f\t%.2f" %(Doppler, PeakVal, X_, Y_, Z_, Range_))
+                    # Display Parameters:
+                    color = (255,255,0) if subNum == 0 else (0,0,255)
+                    pixels = int(X_*self.everyMeterPixels+self.img.shape[1]//2) , self.img.shape[0]-int(Y_*self.everyMeterPixels)
+                    startPoint = pixels[0]-2 , pixels[1]-2
+                    endPoint   = pixels[0]+2 , pixels[1]+2
+                    self.img = cv2.rectangle(self.img, startPoint, endPoint, color, -1)
+                    # Output data:
+                    self.CloudsArray = np.append(self.CloudsArray, [[X_, Y_, Z_, Range_, Doppler, PeakVal, i, frameNum, subNum]],axis=0)
     
     def getCluster(self, bNC):
         (numObj, xyzQFormat) = struct.unpack('HH', bNC[0:4])
@@ -264,43 +312,44 @@ class TiMRRSensor():
             # print("%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f" %(X_, Y_, VX_, VY_, xSize, ySize))
             Range_ = np.sqrt(X_**2 + Y_**2)
             Doppler_ = (VY_*Y_ + VX_*X_)/Range_
+            Doppler_ = Doppler_ + (np.sqrt(VY_**2 + VX_**2))
             Area_ = 4*xSize*ySize
             # print("\n*** *** ***\nRange_\tDoppler_")
             # print("%.2f\t%.2f\n*** *** ***\n" %(Range_, Doppler_))
 
             DrawRectAngle = True
-            if (Doppler_ > 0.4 or Doppler_ < -0.4) and (not self.LearnModeFlag):
+            if ((Doppler_ > self.minSpeed) or (Doppler_ < -self.minSpeed)) and (not self.LearnModeFlag):
                 MOCnt += 1
-                Color = (0,0,255) if Doppler_ > 0 else (255,0,0) # approaching: blue | leaving: red
-                # Color = self.Colors[MOCnt%10]
+                Color = (255,0,0) # if Doppler_ < 0 else (0,0,255) # approaching: blue | leaving: red
                 margin = 3
-                print("X_\tY_\tVX_\tVY_\txSize\tySize")
-                print("%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f" %(X_, Y_, VX_, VY_, xSize, ySize))
-                print("\n*** *** ***\nRange_\tDoppler_\tArea_")
-                print("%.2f\t%.2f\t%.2f\n*** *** ***\n" %(Range_, Doppler_, Area_))
-
+                
                 self.ObjectsArray = np.append(self.ObjectsArray, [[X_, Y_, VX_, VY_, xSize, ySize, Range_, Doppler_, Area_, i, frameNumber, ObjID]],axis=0)
-                print("Seen frameNumber:", frameNumber)
+                
+                # print("X_\tY_\tVX_\tVY_\txSize\tySize")
+                # print("%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f" %(X_, Y_, VX_, VY_, xSize, ySize))
+                # print("\nRange_\tDoppler_\tArea_")
+                # print("%.2f \t%.2f \t%.2f" %(Range_, Doppler_, Area_))
+                # 
+                # print("\nSeen frameNumber:", frameNumber)
 
             elif (Doppler_ < 0.0004 or Doppler_ > -0.0004) and (self.LearnModeFlag):
                 Color = (120,120,120)
                 margin = 7 # self.everyMeterPixels
-            elif Doppler_ == 0 and (not self.LearnModeFlag):
-                Color = (120,120,120)
-                margin = 3 # int(self.everyMeterPixels//2)
+
+            # elif Doppler_ == 0 and (not self.LearnModeFlag):
+            #     Color = (120,120,120)
+            #     margin = 3 # int(self.everyMeterPixels//2)
             else:
                 DrawRectAngle = False
                 Color = (0,0,0)
                 margin = 0
 
             # Display output:
-            # self.img.shape[1] : width of FOV
-            if X_ > self.img.shape[1]   /self.everyMeterPixels/2:
-                X_ = self.img.shape[1]  /self.everyMeterPixels/2
-            elif X_ < -self.img.shape[1]/self.everyMeterPixels/2:
-                X_ = -self.img.shape[1] /self.everyMeterPixels/2
+            if X_ > self.widthRange_/2: 
+                X_ = self.widthRange_/2 
+            elif X_ < -self.widthRange_/2:
+                X_ = -self.widthRange_/2
             
-            # where does this 7 Comes from : 1080//150
             pixels = int(X_*self.everyMeterPixels+self.img.shape[1]//2) , self.img.shape[0]-int(Y_*self.everyMeterPixels)
             startPoint = pixels[0]-margin , pixels[1]-margin
             endPoint   = pixels[0]+margin , pixels[1]+margin
@@ -325,7 +374,8 @@ class TiMRRSensor():
 
 if __name__ == '__main__':
     
-    myRadar = TiMRRSensor()
+    globalArray  = []
+    myRadar = TiMRRSensor(globalArray)
     
 
     t1 = threading.Thread(target=myRadar.parseWhile  , daemon= False)
@@ -339,3 +389,6 @@ if __name__ == '__main__':
     t2.join()
 
     myRadar.closeConnection()
+
+    for obj in globalArray:
+        print (globalArray)
